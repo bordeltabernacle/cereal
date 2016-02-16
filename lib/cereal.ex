@@ -10,23 +10,21 @@ defmodule Cereal do
 
   def send_data(serial_pid, data) do
     Serial.send_data(serial_pid, data)
-    receive_data
   end
 
-  def receive_data(acc \\ "") do
+  def receive_serial_data(acc \\ "") do
     receive do
-      {:elixir_serial, _serial_pid, data} ->
+      {:elixir_serial, _serial_pid, data} when is_binary(data) ->
         acc = acc <> data
 
         if String.ends_with?(acc, "\r\n") do
-          IO.puts(acc)
+          IO.puts String.strip(acc)
           acc = ""
         end
 
-        receive_data(acc)
+        receive_serial_data(acc)
 
-    after
-      1_000 -> IO.puts("nothing after 1s")
+    after 1_000 -> IO.puts "no dice"
     end
   end
 end
