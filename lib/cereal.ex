@@ -6,14 +6,6 @@ defmodule Cereal do
              image: nil,
              model: nil]
 
-  def switch() do
-    hostname = case hostname() do
-                 {:ok, hostname} -> hostname
-                 {:error, msg} -> msg
-               end
-
-  end
-
   def start_link(port \\ "/dev/ttyUSB0", baud \\ 9600) do
     {:ok, serial} = Serial.start_link
     Serial.open(serial, port)
