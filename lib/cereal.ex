@@ -5,26 +5,39 @@ defmodule Cereal do
     Serial.open(serial, port)
     Serial.set_speed(serial, baud)
     Serial.connect(serial)
-    {:ok, serial}
+    serial
   end
 
   def send_data(serial_pid, data) do
     Serial.send_data(serial_pid, data)
   end
 
-  def receive_serial_data(acc \\ "") do
+  def listen(pid, acc \\ "") do
     receive do
       {:elixir_serial, _serial_pid, data} when is_binary(data) ->
         acc = acc <> data
 
         if String.ends_with?(acc, "\r\n") do
-          IO.puts String.strip(acc)
+          send(pid, {:data, String.strip(acc)})
+          #IO.puts String.strip(acc)
           acc = ""
         end
 
-        receive_serial_data(acc)
+        listen(acc)
 
     after 1_000 -> IO.puts "no dice"
     end
+  end
+
+  def read() do
+    receive do
+      {:data, data} -> data
+    after 2_000 -> exit(:timeout)
+    end
+  end
+
+  def speak(pid, data) do
+    start_link |> send_data(data <> "\r\n")
+    listen(pid)
   end
 end
