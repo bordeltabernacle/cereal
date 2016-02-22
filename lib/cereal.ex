@@ -1,13 +1,3 @@
-defmodule CerealStruct do
-
-  defstruct [hostname: nil,
-             serial: nil,
-             version: nil,
-             image: nil,
-             model: nil]
-
-end
-
 defmodule Cereal do
 
   @hostname_regex ~r/hostname\s(?<hostname>\w+)/
@@ -44,16 +34,64 @@ defmodule Cereal do
     start_link |> send_data(data <> "\r\n")
   end
 
-  def switch_map() do
-    switch = %CerealStruct{hostname: hostname(),
-            serial: serial(),
-            version: version(),
-            image: image(),
-            model: model()}
-    IO.puts "\nHostname:\t\t\t\t#{switch.hostname}\nSerial Number:\t#{switch.serial}\nVersion:\t\t\t\t#{switch.version}\nImage:\t\t\t\t\t#{switch.image}\nModel:\t\t\t\t\t#{switch.model}\n"
+  def fetch_switch_data() do
+    switch = %Cereal.Switch{
+      hostname: fetch_hostname(),
+      serial: fetch_serial(),
+      version: fetch_sw_version(),
+      image: fetch_sw_image(),
+      model: fetch_model()}
+
+    sh_inv = fetch_show_command("sh inv")
+    sh_ver = fetch_show_command("sh ver")
+    sh_run = fetch_show_command("sh run")
+
+    switch
+    |> check_switch_data
+    |> add_show_command(:inv, sh_inv)
+    |> add_show_command(:ver, sh_ver)
+    |> add_show_command(:run, sh_run)
+    |> write_to_file!
   end
 
-  def hostname() do
+  defp check_switch_data(%Cereal.Switch{hostname: nil} = data) do
+    IO.puts "Hostname failed, retrieving hostname..."
+    hostname = fetch_hostname()
+    %{data | hostname: hostname} |> check_switch_data
+  end
+  defp check_switch_data(%Cereal.Switch{serial: nil} = data) do
+    IO.puts "Serial Number failed, retrieving serial number..."
+    serial = fetch_serial()
+    %{data | serial: serial} |> check_switch_data
+  end
+  defp check_switch_data(%Cereal.Switch{serial: :mismatch} = data) do
+    IO.puts "Serial Number mismatch, retrieving serial number..."
+    serial = fetch_serial()
+    %{data | serial: serial} |> check_switch_data
+  end
+  defp check_switch_data(%Cereal.Switch{version: nil} = data) do
+    IO.puts "Version failed, retrieving version..."
+    version = fetch_sw_version()
+    %{data | version: version} |> check_switch_data
+  end
+  defp check_switch_data(%Cereal.Switch{image: nil} = data) do
+    IO.puts "Software Image failed, retrieving image..."
+    image = fetch_sw_image()
+    %{data | image: image} |> check_switch_data
+  end
+  defp check_switch_data(%Cereal.Switch{model: nil} = data) do
+    IO.puts "Model failed, retrieving model..."
+    model = fetch_model()
+    %{data | model: model} |> check_switch_data
+  end
+  defp check_switch_data(%Cereal.Switch{model: :mismatch} = data) do
+    IO.puts "Model mismatch, retrieving model..."
+    model = fetch_model()
+    %{data | model: model} |> check_switch_data
+  end
+  defp check_switch_data(data), do: data
+
+  def fetch_hostname() do
     speak "sh run | inc hostname"
     IO.puts "Retrieving switch hostname..."
     result = listen()
@@ -62,49 +100,38 @@ defmodule Cereal do
     hostname
   end
 
-  def serial() do
+  def fetch_serial() do
     speak "sh inv | inc SN:"
     IO.puts "Retrieving serial number..."
     %{"serial" => serial_1} = Regex.named_captures(
       @sh_inv_serial_regex, listen())
 
     speak "sh ver | inc System serial"
-    IO.puts "Retrieving serial number..."
+    IO.puts "Checking serial number..."
     %{"serial" => serial_2} = Regex.named_captures(
       @sh_ver_serial_regex, listen())
 
-    IO.puts "Checking serial number..."
-
-    cond do
-      serial_1 == serial_2 ->
-        serial_1
-      true ->
-        :mismatch
-    end
+    compare_values(serial_1, serial_2)
   end
 
-  def model() do
+  def fetch_model() do
     speak "sh ver | inc Model number"
     IO.puts "Retrieving model number..."
     %{"model" => model_1} = Regex.named_captures(
       @model_regex, listen())
 
     speak "sh inv | inc PID:"
-    IO.puts "Retrieving model number..."
+    IO.puts "Checking model number..."
     %{"model" => model_2} = Regex.named_captures(
       @model_regex, listen())
 
-    IO.puts "Checking model number..."
-
-    cond do
-      model_1 == model_2 ->
-        model_1
-      true ->
-        :mismatch
-    end
+    compare_values(model_1, model_2)
   end
 
-  def version() do
+  defp compare_values(val, val), do: val
+  defp compare_values(val_1, val_2) when val_1 != val_2, do: :mismatch
+
+  def fetch_sw_version() do
     speak "sh ver | inc Version"
     IO.puts "Retrieving software version..."
     %{"version" => version} = Regex.named_captures(
@@ -112,7 +139,7 @@ defmodule Cereal do
     version
   end
 
-  def image() do
+  def fetch_sw_image() do
     speak "sh ver | inc image"
     IO.puts "Retrieving software image..."
     %{"image" => image} = Regex.named_captures(
@@ -120,10 +147,39 @@ defmodule Cereal do
     image
   end
 
-  def sh_inv() do
-    hostname = hostname()
-    speak "sh inv"
-    IO.puts "Retrieving results from 'show inventory' command..."
-    File.write!(hostname <> "-sh_inv.txt", listen())
+  def fetch_show_command(command) do
+    speak command
+    IO.puts "Retrieving results from #{command} command..."
+    listen()
+  end
+
+  def add_show_command(data, :inv, value), do: %{data | sh_inv: value}
+  def add_show_command(data, :ver, value), do: %{data | sh_ver: value}
+  def add_show_command(data, :run, value), do: %{data | sh_run: value}
+
+  def write_to_file!(data) do
+    IO.puts "Writing to file..."
+    content = ~s"""
+    =====================================================
+    Hostname:\t\t\t\t\t\t#{data.hostname}
+    Serial Number:\t\t\t#{data.serial}
+    Model Number:\t\t\t\t#{data.model}
+    Software Image:\t\t\t#{data.image}
+    Software Version:\t\t#{data.version}
+    =====================================================
+    Show Inventory
+    -----------------------------------------------------
+    #{data.sh_inv}
+    =====================================================
+    Show Version
+    -----------------------------------------------------
+    #{data.sh_ver}
+    =====================================================
+    Show Run
+    -----------------------------------------------------
+    #{data.sh_run}
+    =====================================================
+    """
+    File.write!(data.hostname <> ".txt", content)
   end
 end
